@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Body, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Body, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +12,7 @@ import logging
 from auth import get_current_user_token, verify_password, create_access_token
 
 import database
-from models import Base, User, Task, VoiceMessage
+from models import Base, User, Task, VoiceMessage, VoiceInstruction
 import uuid
 import shutil
 
@@ -209,4 +209,60 @@ def get_voice_messages(task_id: str, db: Session = Depends(database.get_db), cur
             "created_at": msg.created_at
         }
         for msg in messages
+    ]
+
+@app.post("/instructions/voice")
+def upload_voice_instruction(recipient_username: str = Form(...), file: UploadFile = File(...), db: Session = Depends(database.get_db), current_username: str = Depends(get_current_user_token)):
+    sender = db.query(User).filter(User.username == current_username).first()
+    if sender.role not in ["manager", "admin", "owner"]:
+        raise HTTPException(status_code=403, detail="Only managers, admins, and owners can send instructions")
+        
+    recipient = db.query(User).filter(User.username == recipient_username).first()
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+        
+    file_id = str(uuid.uuid4())
+    file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'm4a'
+    filename = f"instruction_{sender.id}_to_{recipient.id}_{file_id}.{file_ext}"
+    file_path = f"uploads/voice_messages/{filename}"
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        instruction = VoiceInstruction(
+            id=file_id,
+            sender_id=sender.id,
+            recipient_id=recipient.id,
+            file_path=f"/uploads/voice_messages/{filename}"
+        )
+        db.add(instruction)
+        db.commit()
+        
+        return {"success": True, "message": "Instruction uploaded", "instruction_id": file_id}
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error uploading voice instruction: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/instructions/voice")
+def get_voice_instructions(db: Session = Depends(database.get_db), current_username: str = Depends(get_current_user_token)):
+    user = db.query(User).filter(User.username == current_username).first()
+    
+    if user.role in ["manager", "admin", "owner"]:
+        # Manager/Owner sees instructions they sent
+        instructions = db.query(VoiceInstruction).filter(VoiceInstruction.sender_id == user.id).order_by(VoiceInstruction.created_at.desc()).all()
+    else:
+        # Employee sees instructions sent to them
+        instructions = db.query(VoiceInstruction).filter(VoiceInstruction.recipient_id == user.id).order_by(VoiceInstruction.created_at.desc()).all()
+        
+    return [
+        {
+            "id": inst.id,
+            "sender": inst.sender.name,
+            "recipient": inst.recipient.name,
+            "file_url": inst.file_path,
+            "created_at": inst.created_at
+        }
+        for inst in instructions
     ]

@@ -17,6 +17,8 @@ class User(Base):
     avatar = Column(String(255))
     
     tasks = relationship("Task", back_populates="assignee")
+    instructions_sent = relationship("VoiceInstruction", foreign_keys="[VoiceInstruction.sender_id]", back_populates="sender")
+    instructions_received = relationship("VoiceInstruction", foreign_keys="[VoiceInstruction.recipient_id]", back_populates="recipient")
 
 class Task(Base):
     __tablename__ = "tasks"
@@ -43,3 +45,15 @@ class VoiceMessage(Base):
     
     task = relationship("Task", back_populates="voice_messages")
     user = relationship("User")
+
+class VoiceInstruction(Base):
+    __tablename__ = "voice_instructions"
+    
+    id = Column(String(50), primary_key=True, index=True)
+    sender_id = Column(String(50), ForeignKey("users.id"), nullable=False)
+    recipient_id = Column(String(50), ForeignKey("users.id"), nullable=False)
+    file_path = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="instructions_sent")
+    recipient = relationship("User", foreign_keys=[recipient_id], back_populates="instructions_received")
