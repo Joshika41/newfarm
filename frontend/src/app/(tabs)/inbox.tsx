@@ -100,7 +100,19 @@ export default function InboxScreen() {
       const token = await StorageService.getToken();
       const formData = new FormData();
       formData.append('recipient_username', selectedEmployee);
-      formData.append('file', { uri, name: 'instruction.m4a', type: 'audio/m4a' } as any);
+      
+      const fileExt = Platform.OS === 'web' ? 'webm' : 'm4a';
+      const mimeType = Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a';
+      
+      // On web, uri is usually a blob URL, but we need to fetch it to get a File object,
+      // However, expo-av provides a file via getURI() that works with fetch/FormData if handled correctly.
+      if (Platform.OS === 'web') {
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        formData.append('file', blob, `instruction.${fileExt}`);
+      } else {
+        formData.append('file', { uri, name: `instruction.${fileExt}`, type: mimeType } as any);
+      }
       
       const baseUrlStr = process.env.EXPO_PUBLIC_API_URL || envBaseUrl || 'http://localhost:8000';
       await axios.post(`${baseUrlStr}/instructions/voice`, formData, {

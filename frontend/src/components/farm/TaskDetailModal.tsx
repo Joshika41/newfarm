@@ -76,7 +76,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     try {
       const token = await StorageService.getToken();
       const formData = new FormData();
-      formData.append('file', { uri, name: 'voice.m4a', type: 'audio/m4a' } as any);
+      const fileExt = Platform.OS === 'web' ? 'webm' : 'm4a';
+      const mimeType = Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a';
+      
+      if (Platform.OS === 'web') {
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        formData.append('file', blob, `voice.${fileExt}`);
+      } else {
+        formData.append('file', { uri, name: `voice.${fileExt}`, type: mimeType } as any);
+      }
       const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
       await axios.post(`${baseUrl}/tasks/${task.id}/voice`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${token}` }
@@ -93,7 +102,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       const { sound: newSound } = await Audio.Sound.createAsync({ uri: fullUrl });
       setSound(newSound);
       await newSound.playAsync();
-    } catch (e) { console.error('Play failed', e); }
+    } catch (e: any) { 
+      console.error('Play failed', e);
+      if (Platform.OS === 'web' && e.message?.includes('NotSupportedError')) {
+        alert('Your web browser does not support playing this audio format. Please test on a physical iOS/Android device!');
+      }
+    }
   };
 
   if (!task) return null;
