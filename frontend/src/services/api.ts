@@ -6,5 +6,7 @@ export const Url = {
   toggleTask: (id: string) => `${baseUrl}/tasks/${id}/toggle`,
   uploadVoice: (id: string) => `${baseUrl}/tasks/${id}/voice`,
   getVoice: (id: string) => `${baseUrl}/tasks/${id}/voice`,
+  uploadInstruction: `${baseUrl}/instructions/voice`,
+  getInstructions: `${baseUrl}/instructions/voice`,
   users: `${baseUrl}/users`,
 };

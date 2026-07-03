@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs } from 'expo-router';
-import { LayoutDashboard, ClipboardCheck, AreaChart, User, AlertTriangle } from 'lucide-react-native';
+import { LayoutDashboard, ClipboardCheck, AreaChart, User, AlertTriangle, MessageSquare } from 'lucide-react-native';
 import { useTheme } from '../../hooks/useTheme';
 import { StorageService, isManagerRole } from '../../services/storage';
 import { Platform } from 'react-native';
@@ -54,6 +54,13 @@ export default function TabLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color, size }) => <LayoutDashboard size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="inbox"
+        options={{
+          title: 'Inbox',
+          tabBarIcon: ({ color, size }) => <MessageSquare size={size} color={color} />,
         }}
       />
       <Tabs.Screen
