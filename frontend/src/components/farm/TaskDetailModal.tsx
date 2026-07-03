@@ -6,6 +6,10 @@ import { AppButton } from '../ui/AppButton';
 import { useTheme } from '../../hooks/useTheme';
 import { StorageService } from '../../services/storage';
 import { Task } from '../../types';
+import { Audio } from 'expo-av';
+import axios from 'axios';
+import { Url } from '../../services/api';
+import { Mic, Play, Square } from 'lucide-react-native';
 
 interface TaskDetailModalProps {
   visible: boolean;
@@ -27,12 +31,70 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const { colors, isDark } = useTheme();
   const [notes, setNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
+  
+  const [voices, setVoices] = useState<any[]>([]);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
 
   useEffect(() => {
     if (task) {
       setNotes(task.notes || '');
+      fetchVoices();
     }
   }, [task]);
+
+  const fetchVoices = async () => {
+    if (!task) return;
+    try {
+      const token = await StorageService.getToken();
+      const res = await axios.get(Url.getVoice(task.id), { headers: { Authorization: `Bearer ${token}` }});
+      setVoices(res.data);
+    } catch (e) { console.error('Failed to fetch voices', e); }
+  };
+
+  const startRecording = async () => {
+    try {
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecording(recording);
+    } catch (err) { console.error('Failed to start recording', err); }
+  };
+
+  const stopRecording = async () => {
+    if (!recording) return;
+    setRecording(null);
+    await recording.stopAndUnloadAsync();
+    const uri = recording.getURI();
+    uploadVoice(uri);
+  };
+
+  const uploadVoice = async (uri: string | null) => {
+    if (!uri || !task) return;
+    setUploadingVoice(true);
+    try {
+      const token = await StorageService.getToken();
+      const formData = new FormData();
+      formData.append('file', { uri, name: 'voice.m4a', type: 'audio/m4a' } as any);
+      const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+      await axios.post(`${baseUrl}/tasks/${task.id}/voice`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${token}` }
+      });
+      fetchVoices();
+    } catch (e) { console.error('Upload failed', e); }
+    setUploadingVoice(false);
+  };
+
+  const playVoice = async (url: string) => {
+    try {
+      const baseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+      const fullUrl = `${baseUrl}${url}`;
+      const { sound: newSound } = await Audio.Sound.createAsync({ uri: fullUrl });
+      setSound(newSound);
+      await newSound.playAsync();
+    } catch (e) { console.error('Play failed', e); }
+  };
 
   if (!task) return null;
 
@@ -249,6 +311,57 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               <Text style={{ color: '#FFFFFF', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>Save</Text>
             </Pressable>
           </View>
+        </View>
+
+        {/* Voice Messages Section */}
+        <View className="mb-2">
+          <Text style={{ color: colors.text, fontFamily: 'Poppins_600SemiBold', fontSize: 12, textTransform: 'uppercase', marginBottom: 8 }}>
+            Voice Memos
+          </Text>
+          
+          <View className="flex-row items-center mb-3">
+            <Pressable
+              onPress={recording ? stopRecording : startRecording}
+              disabled={uploadingVoice}
+              style={{ backgroundColor: recording ? colors.danger : colors.primary }}
+              className="flex-row items-center px-4 py-2 rounded-xl active:scale-95 disabled:opacity-50 mr-2"
+            >
+              {recording ? (
+                <Square size={16} color="#FFFFFF" className="mr-2" />
+              ) : (
+                <Mic size={16} color="#FFFFFF" className="mr-2" />
+              )}
+              <Text style={{ color: '#FFFFFF', fontFamily: 'Inter_600SemiBold', fontSize: 13 }}>
+                {recording ? 'Stop Recording' : (uploadingVoice ? 'Uploading...' : 'Record Voice Memo')}
+              </Text>
+            </Pressable>
+          </View>
+
+          {voices.length > 0 ? (
+            <View className="space-y-2">
+              {voices.map((v) => (
+                <View 
+                  key={v.id} 
+                  style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth: 1 }}
+                  className="rounded-xl p-3 flex-row items-center justify-between"
+                >
+                  <View>
+                    <Text style={{ color: colors.text, fontFamily: 'Inter_600SemiBold', fontSize: 12 }}>{v.user}'s Memo</Text>
+                    <Text style={{ color: colors.textSecondary, fontFamily: 'Inter_400Regular', fontSize: 10 }}>{new Date(v.created_at).toLocaleString()}</Text>
+                  </View>
+                  <Pressable 
+                    onPress={() => playVoice(v.file_url)}
+                    style={{ backgroundColor: colors.primary + '20' }}
+                    className="p-2 rounded-full"
+                  >
+                    <Play size={16} color={colors.primary} />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={{ color: colors.textSecondary, fontSize: 11, fontStyle: 'italic' }}>No voice memos yet.</Text>
+          )}
         </View>
 
         {/* Action Buttons */}

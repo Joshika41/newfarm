@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi import FastAPI, Depends, HTTPException, Body, UploadFile, File
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -11,7 +12,9 @@ import logging
 from auth import get_current_user_token, verify_password, create_access_token
 
 import database
-from models import Base, User, Task
+from models import Base, User, Task, VoiceMessage
+import uuid
+import shutil
 
 app = FastAPI(title="Farm Scheduler API - Production")
 
@@ -23,6 +26,10 @@ else:
     origins = [
         "https://farm-work-scheduler.vercel.app"
     ]
+
+# Ensure uploads directory exists
+os.makedirs("uploads/voice_messages", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -153,3 +160,53 @@ def toggle_task(task_id: str, payload: dict = Body(...), db: Session = Depends(d
         db.rollback()
         logging.error(f"Error toggling task {task_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/tasks/{task_id}/voice")
+def upload_voice_message(task_id: str, file: UploadFile = File(...), db: Session = Depends(database.get_db), current_username: str = Depends(get_current_user_token)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    user = db.query(User).filter(User.username == current_username).first()
+    
+    file_id = str(uuid.uuid4())
+    file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'm4a'
+    filename = f"task_{task_id}_{user.id}_{file_id}.{file_ext}"
+    file_path = f"uploads/voice_messages/{filename}"
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        voice_msg = VoiceMessage(
+            id=file_id,
+            task_id=task_id,
+            user_id=user.id,
+            file_path=f"/uploads/voice_messages/{filename}"
+        )
+        db.add(voice_msg)
+        db.commit()
+        
+        return {"success": True, "message": "Voice message uploaded", "voice_id": file_id}
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Error uploading voice message: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/tasks/{task_id}/voice")
+def get_voice_messages(task_id: str, db: Session = Depends(database.get_db), current_username: str = Depends(get_current_user_token)):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    messages = db.query(VoiceMessage).filter(VoiceMessage.task_id == task_id).order_by(VoiceMessage.created_at.desc()).all()
+    
+    return [
+        {
+            "id": msg.id,
+            "user": msg.user.name,
+            "file_url": msg.file_path,
+            "created_at": msg.created_at
+        }
+        for msg in messages
+    ]

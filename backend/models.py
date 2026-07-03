@@ -1,4 +1,6 @@
-from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy import Column, String, ForeignKey, DateTime
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -28,3 +30,16 @@ class Task(Base):
     priority = Column(String(20), default="medium")
     
     assignee = relationship("User", back_populates="tasks")
+    voice_messages = relationship("VoiceMessage", back_populates="task", cascade="all, delete-orphan")
+
+class VoiceMessage(Base):
+    __tablename__ = "voice_messages"
+    
+    id = Column(String(50), primary_key=True, index=True)
+    task_id = Column(String(50), ForeignKey("tasks.id"), nullable=False)
+    user_id = Column(String(50), ForeignKey("users.id"), nullable=False)
+    file_path = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    task = relationship("Task", back_populates="voice_messages")
+    user = relationship("User")
