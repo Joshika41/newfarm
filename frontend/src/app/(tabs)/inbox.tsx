@@ -5,7 +5,7 @@ import { StorageService, isManagerRole } from '../../services/storage';
 import { Url, baseUrl as envBaseUrl } from '../../services/api';
 import axios from 'axios';
 import { Audio } from 'expo-av';
-import { Mic, Play, Square, Send, User, ChevronDown } from 'lucide-react-native';
+import { Mic, Play, Square, Send, User, ChevronDown, MessageSquare } from 'lucide-react-native';
 
 export default function InboxScreen() {
   const { colors, isDark } = useTheme();
