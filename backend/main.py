@@ -1,21 +1,28 @@
 from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text
 from typing import List, Dict, Any
-import datetime
+from pydantic import BaseModel
+import os
+import logging
+
+from auth import get_current_user_token, verify_password, create_access_token
 
 import database
+from models import Base, User, Task
 
-app = FastAPI(title="Farm Scheduler API")
+app = FastAPI(title="Farm Scheduler API - Production")
 
-origins = [
-    "https://farm-work-scheduler.vercel.app",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:8081", # Expo web default port
-]
+cors_env = os.getenv("CORS_ORIGINS")
+if cors_env:
+    origins = [origin.strip() for origin in cors_env.split(",")]
+else:
+    # Safe default if env not set
+    origins = [
+        "https://farm-work-scheduler.vercel.app"
+    ]
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,149 +32,124 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_category_from_table(table_name: str) -> str:
-    name = table_name.lower()
-    if 'bird' in name: return 'birds'
-    if 'calf' in name: return 'calves'
-    if 'cow' in name: return 'cow_shed'
-    if 'fish' in name: return 'fish'
-    if 'pond' in name: return 'pond'
-    if 'car' in name or 'bike' in name: return 'vehicles'
-    return 'maintenance'
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 @app.get("/")
 def read_root():
     return {"message": "Welcome to Farm Scheduler API", "status": "active"}
 
-@app.get("/tasks")
-def get_all_tasks(db: Session = Depends(database.get_db)):
+@app.post("/login")
+def login(request: LoginRequest, db: Session = Depends(database.get_db)):
     """
-    Reads all tables and transforms the raw spreadsheet rows into standard Task objects.
+    Production-grade login endpoint. Verifies credentials against the database.
+    """
+    from fastapi.responses import JSONResponse
+    
+    # Lowercase the username to ensure case-insensitive matching
+    search_username = request.username.strip().lower()
+    user = db.query(User).filter(User.username == search_username).first()
+    
+    if not user:
+        return JSONResponse(status_code=404, content={"success": False, "message": "User not found. Please check your username."})
+        
+    if not verify_password(request.password, user.password):
+        return JSONResponse(status_code=401, content={"success": False, "message": "Invalid password. Please try again."})
+
+    # Generate JWT
+    access_token = create_access_token(data={"sub": user.username})
+        
+    return {
+        "success": True,
+        "message": "Login successful",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "name": user.name,
+            "role": user.role,
+            "avatar": user.avatar,
+            "assigned_checklists": [] # Employee checklist array
+        }
+    }
+
+@app.post("/token")
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.get_db)):
+    """
+    OAuth2 compatible token login, required for Swagger UI's Authorize button.
+    """
+    search_username = form_data.username.strip().lower()
+    user = db.query(User).filter(User.username == search_username).first()
+    
+    if not user or not verify_password(form_data.password, user.password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/tasks")
+def get_all_tasks(username: str = None, db: Session = Depends(database.get_db), current_username: str = Depends(get_current_user_token)):
+    """
+    Fetches tasks from the optimized tasks table.
+    Filters by assigned user if username is provided.
+    Requires authentication.
     """
     try:
-        inspector = inspect(database.engine)
-        tables = inspector.get_table_names()
+        query = db.query(Task)
         
-        all_tasks = []
-        today_str = datetime.datetime.now().strftime("%a") # e.g. "Fri"
+        if username:
+            user = db.query(User).filter(User.username == username).first()
+            if user:
+                query = query.filter(Task.assigned_to == user.id)
+            else:
+                return [] # User not found, return empty tasks
+                
+        tasks = query.all()
         
-        for table in tables:
-            category = get_category_from_table(table)
-            query = text(f"SELECT * FROM `{table}`")
-            result = db.execute(query)
-            
-            keys = result.keys()
-            rows = [dict(zip(keys, row)) for row in result.fetchall()]
-            
-            if not rows:
-                continue
-                
-            # Row 0 is usually the header row in this schema
-            header_row = rows[0]
-            
-            # Find the column keys
-            col_keys = list(header_row.keys())
-            if len(col_keys) < 3:
-                continue
-                
-            id_col = col_keys[0] # usually MyUnknownColumn (S.NO)
-            desc_col = col_keys[1] # usually Responsible person: ...
-            
-            # Find the column that corresponds to today
-            today_col = None
-            for key, val in header_row.items():
-                if isinstance(val, str) and val.strip() == today_str:
-                    today_col = key
-                    break
-            
-            # Fallback if today's column not found (just use a hardcoded one for testing, e.g., Jun-26 or last column)
-            if not today_col:
-                if 'Jun-26' in col_keys:
-                    today_col = 'Jun-26'
-                else:
-                    today_col = col_keys[-1] # fallback to last column
-            
-            # Process data rows (skip row 0)
-            for row in rows[1:]:
-                # skip empty rows
-                if not row.get(id_col) or not row.get(desc_col) or str(row.get(id_col)).strip() == '':
-                    continue
-                
-                # S.NO is string like "1", "2"
-                row_id = str(row.get(id_col)).strip()
-                if row_id.upper() in ['S.NO', 'SL.NO.', 'SL.NO', 'S.NO.', 'ID']:
-                    continue
-                    
-                title = str(row.get(desc_col)).strip()
-                
-                status_val = str(row.get(today_col, '')).strip().upper()
-                status = 'completed' if status_val == 'YES' else 'pending'
-                
-                task = {
-                    "id": f"{table}::{row_id}",
-                    "title": title,
-                    "category": category,
-                    "subcategory": "Daily Routine",
-                    "status": status,
-                    "assignedTo": "Unassigned",
-                    "priority": "medium",
-                }
-                all_tasks.append(task)
-                
-        return all_tasks
+        # Format for the frontend expectations
+        return [
+            {
+                "id": task.id,
+                "title": task.title,
+                "category": task.category,
+                "subcategory": task.subcategory,
+                "status": task.status,
+                "assignedTo": task.assignee.name if task.assignee else "Unassigned",
+                "priority": task.priority
+            }
+            for task in tasks
+        ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error fetching tasks: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/tasks/{task_id}/toggle")
-def toggle_task(task_id: str, payload: dict = Body(...), db: Session = Depends(database.get_db)):
+def toggle_task(task_id: str, payload: dict = Body(...), db: Session = Depends(database.get_db), current_username: str = Depends(get_current_user_token)):
     """
-    Toggles the task status in the specific database table and column.
+    Toggles the task status in the tasks table.
+    Requires authentication.
     """
     try:
-        if "::" not in task_id:
-            raise HTTPException(status_code=400, detail="Invalid task ID format")
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
             
-        table_name, row_id = task_id.split("::", 1)
-        
-        # Verify table exists
-        inspector = inspect(database.engine)
-        tables = inspector.get_table_names()
-        if table_name not in tables:
-            raise HTTPException(status_code=404, detail="Table not found")
+        new_status = payload.get("status")
+        if new_status not in ["completed", "pending"]:
+            raise HTTPException(status_code=400, detail="Invalid status")
             
-        # Determine the column to update (same logic as GET)
-        query = text(f"SELECT * FROM `{table_name}` LIMIT 1")
-        result = db.execute(query)
-        keys = result.keys()
-        row_0 = dict(zip(keys, result.fetchone()))
-        
-        today_str = datetime.datetime.now().strftime("%a")
-        today_col = None
-        for key, val in row_0.items():
-            if isinstance(val, str) and val.strip() == today_str:
-                today_col = key
-                break
-                
-        if not today_col:
-            col_keys = list(row_0.keys())
-            if 'Jun-26' in col_keys:
-                today_col = 'Jun-26'
-            else:
-                today_col = col_keys[-1]
-                
-        id_col = list(row_0.keys())[0]
-        
-        # Determine new status from frontend request
-        new_status_val = "YES" if payload.get("status") == "completed" else "NO"
-        
-        # Update the database using parameterized query
-        # We need to build the update query safely. Column names can have spaces.
-        update_query = text(f"UPDATE `{table_name}` SET `{today_col}` = :status_val WHERE `{id_col}` = :row_id")
-        db.execute(update_query, {"status_val": new_status_val, "row_id": row_id})
+        task.status = new_status
         db.commit()
         
-        return {"success": True, "message": f"Task toggled to {new_status_val}"}
+        return {"success": True, "message": f"Task toggled to {new_status}"}
         
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error toggling task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")

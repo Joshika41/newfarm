@@ -5,6 +5,7 @@ export default function ChecklistLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="birds" />
       <Stack.Screen name="fish" />
+      <Stack.Screen name="health" />
     </Stack>
   );
 }

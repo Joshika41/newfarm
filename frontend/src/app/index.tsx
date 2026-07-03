@@ -11,7 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Sprout } from 'lucide-react-native';
 import { useTheme } from '../hooks/useTheme';
-import { StorageService } from '../services/storage';
+import { StorageService, isManagerRole } from '../services/storage';
 
 export default function SplashScreen() {
   const { colors } = useTheme();
@@ -30,12 +30,17 @@ export default function SplashScreen() {
     textOpacity.value = withDelay(400, withTiming(1, { duration: 600 }));
     textTranslateY.value = withDelay(400, withSpring(0, { damping: 15 }));
 
-    // 2. Auth Check & Navigation Redirect
+    // 2. Auth Check & Role-Based Navigation Redirect
     const timer = setTimeout(async () => {
       try {
         const currentUser = await StorageService.getCurrentUser();
         if (currentUser) {
-          router.replace('/(tabs)/dashboard');
+          // Route based on role
+          if (isManagerRole(currentUser.role)) {
+            router.replace('/(tabs)/manager');
+          } else {
+            router.replace('/(tabs)/dashboard');
+          }
         } else {
           router.replace('/login');
         }

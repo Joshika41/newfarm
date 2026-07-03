@@ -1,107 +1,107 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import { Url } from './api';
 import { Task, User, ActivityLog, FarmSummary, TaskCategory, Issue, Notification } from '../types';
-import { INITIAL_USERS, INITIAL_TASKS, INITIAL_ACTIVITIES, INITIAL_ISSUES, INITIAL_NOTIFICATIONS } from './mockData';
+import { INITIAL_TASKS, INITIAL_ACTIVITIES, INITIAL_ISSUES, INITIAL_NOTIFICATIONS, INITIAL_USERS } from './mockData';
 
+// ── Storage Keys ──────────────────────────────────────────────────────────────
 const KEYS = {
   USER: 'fws_user',
-  USERS: 'fws_users',
+  TOKEN: 'fws_token',
   TASKS: 'fws_tasks',
   ACTIVITIES: 'fws_activities',
   ISSUES: 'fws_issues',
-  NOTIFICATIONS: 'fws_notifications'
+  NOTIFICATIONS: 'fws_notifications',
 };
 
 const KEYS_EXT = {
-  TASK_PHOTOS: 'fws_task_photos'
+  TASK_PHOTOS: 'fws_task_photos',
 };
 
+// ── Helper to determine if a role is a manager-level role ────────────────────
+export function isManagerRole(role: string): boolean {
+  return role === 'admin' || role === 'owner' || role === 'manager';
+}
+
 export const StorageService = {
-  // --- USER AUTH / SESSION ---
+
+  // ── TOKEN MANAGEMENT ────────────────────────────────────────────────────────
+  async getToken(): Promise<string | null> {
+    return await AsyncStorage.getItem(KEYS.TOKEN);
+  },
+
+  // ── USER AUTH / SESSION ──────────────────────────────────────────────────────
   async login(identifier: string, password: string): Promise<User | null> {
-    const users = await this.getUsers();
-    const normalized = identifier.trim().toLowerCase();
-
-    const user = users.find((u) => {
-      const validPassword = u.password === password;
-      if (!validPassword) return false;
-      if (normalized.includes('@') && u.email) {
-        return u.email.toLowerCase() === normalized;
-      }
-      return u.username.toLowerCase() === normalized;
-    });
-
-    if (user) {
+    const mockUser = INITIAL_USERS.find(
+      (u) => u.username.toLowerCase() === identifier.trim().toLowerCase() && u.password === password
+    );
+    if (mockUser) {
+      const user: User = {
+        id: mockUser.id,
+        name: mockUser.name,
+        username: mockUser.username,
+        role: mockUser.role,
+        assigned_checklists: mockUser.assigned_checklists || [],
+      };
+      await AsyncStorage.setItem(KEYS.TOKEN, 'mock-token');
       await AsyncStorage.setItem(KEYS.USER, JSON.stringify(user));
       return user;
     }
-
     return null;
-  },
-
-  async getUsers(): Promise<User[]> {
-    const usersStr = await AsyncStorage.getItem(KEYS.USERS);
-    if (!usersStr) {
-      await AsyncStorage.setItem(KEYS.USERS, JSON.stringify(INITIAL_USERS));
-      return INITIAL_USERS;
-    }
-    return JSON.parse(usersStr);
-  },
-
-  async saveUsers(users: User[]): Promise<void> {
-    await AsyncStorage.setItem(KEYS.USERS, JSON.stringify(users));
-  },
-
-  async registerEmployee(employee: Omit<User, 'id' | 'role'>): Promise<User> {
-    const users = await this.getUsers();
-    const existing = users.find((user) =>
-      user.username.toLowerCase() === employee.username.toLowerCase() ||
-      (employee.email && user.email?.toLowerCase() === employee.email.toLowerCase())
-    );
-    if (existing) {
-      throw new Error('Username or email already exists');
-    }
-
-    const newUser: User = {
-      ...employee,
-      id: `emp_${Date.now()}`,
-      role: 'employee',
-      avatar: employee.avatar || `https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150&auto=format&fit=crop&q=80`,
-    };
-
-    const updated = [newUser, ...users];
-    await this.saveUsers(updated);
-    return newUser;
   },
 
   async getCurrentUser(): Promise<User | null> {
     const userStr = await AsyncStorage.getItem(KEYS.USER);
-    return userStr ? JSON.parse(userStr) : null;
+    if (!userStr) return null;
+    const user: User = JSON.parse(userStr);
+
+    // Optionally validate the token is still valid by checking the stored token
+    const token = await this.getToken();
+    if (!token) {
+      // Token is gone but user object exists — clear session
+      await this.logout();
+      return null;
+    }
+    return user;
   },
 
   async logout(): Promise<void> {
     await AsyncStorage.removeItem(KEYS.USER);
+    await AsyncStorage.removeItem(KEYS.TOKEN);
   },
 
-  // --- TASKS ---
+  // Kept for compatibility (used in Manager's add employee form)
+  async getUsers(): Promise<User[]> {
+    return INITIAL_USERS.map((u) => ({
+      id: String(u.id),
+      name: u.name,
+      username: u.username,
+      role: u.role,
+      assigned_checklists: u.assigned_checklists || [],
+    }));
+  },
+
+  // ── TASKS ─────────────────────────────────────────────────────────────────────
   async getTasks(): Promise<Task[]> {
     try {
-      const response = await fetch('http://localhost:8000/tasks');
-      if (response.ok) {
-        const tasks = await response.json();
-        await this.saveTasks(tasks); // Cache them
-        return tasks;
+      const token = await this.getToken();
+      if (!token) throw new Error("No token available");
+      
+      const response = await axios.get(Url.tasks, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const fetchedTasks = response.data;
+      await this.saveTasks(fetchedTasks);
+      return fetchedTasks;
+    } catch (err) {
+      console.error("Failed to fetch tasks from backend, falling back to local:", err);
+      const tasksStr = await AsyncStorage.getItem(KEYS.TASKS);
+      if (!tasksStr) {
+        await AsyncStorage.setItem(KEYS.TASKS, JSON.stringify(INITIAL_TASKS));
+        return INITIAL_TASKS;
       }
-    } catch (e) {
-      console.warn("Failed to fetch from backend, using cache", e);
+      return JSON.parse(tasksStr);
     }
-    
-    const tasksStr = await AsyncStorage.getItem(KEYS.TASKS);
-    if (!tasksStr) {
-      // Seed initial tasks
-      await AsyncStorage.setItem(KEYS.TASKS, JSON.stringify(INITIAL_TASKS));
-      return INITIAL_TASKS;
-    }
-    return JSON.parse(tasksStr);
   },
 
   async saveTasks(tasks: Task[]): Promise<void> {
@@ -115,27 +115,26 @@ export const StorageService = {
       const task = tasks[taskIndex];
       const isCompleting = task.status === 'pending';
       const newStatus = isCompleting ? 'completed' : 'pending';
-      
-      // Update backend
+
       try {
-        await fetch(`http://localhost:8000/tasks/${encodeURIComponent(taskId)}/toggle`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: newStatus })
-        });
-      } catch (e) {
-        console.warn("Failed to update backend", e);
+        const token = await this.getToken();
+        if (token) {
+          await axios.post(Url.toggleTask(taskId), { status: newStatus }, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        }
+      } catch (err) {
+        console.error("Failed to sync toggle with backend:", err);
       }
-      
+
       task.status = newStatus;
       task.completedAt = isCompleting ? new Date().toISOString() : undefined;
       task.completedBy = isCompleting ? userName : undefined;
 
       await this.saveTasks(tasks);
 
-      // Log activity
-      const actionText = isCompleting 
-        ? `Completed "${task.title}"` 
+      const actionText = isCompleting
+        ? `Completed "${task.title}"`
         : `Reopened "${task.title}"`;
       await this.logActivity(userName, actionText, task.category);
     }
@@ -155,7 +154,7 @@ export const StorageService = {
     return this.getTasks();
   },
 
-  // --- ACTIVITIES ---
+  // ── ACTIVITIES ────────────────────────────────────────────────────────────────
   async getActivities(): Promise<ActivityLog[]> {
     const actStr = await AsyncStorage.getItem(KEYS.ACTIVITIES);
     if (!actStr) {
@@ -173,30 +172,28 @@ export const StorageService = {
       userName,
       action,
       timestamp: new Date().toISOString(),
-      category
+      category,
     };
-    
-    // Add to top and limit to 50 logs
     const updated = [newLog, ...activities].slice(0, 50);
     await AsyncStorage.setItem(KEYS.ACTIVITIES, JSON.stringify(updated));
     return newLog;
   },
 
-  // --- ANALYTICS ---
+  // ── ANALYTICS ─────────────────────────────────────────────────────────────────
   async getSummary(): Promise<FarmSummary> {
     const tasks = await this.getTasks();
     const totalTasks = tasks.length;
     const completedTasks = tasks.filter((t) => t.status === 'completed').length;
     const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-    const categories: TaskCategory[] = ['birds', 'fish', 'pond', 'calves', 'cow_shed', 'vehicles', 'maintenance'];
+    const categories: TaskCategory[] = ['birds', 'fish', 'pond', 'calves', 'cow_shed', 'vehicles', 'maintenance', 'health'];
     const byCategory = {} as Record<TaskCategory, { total: number; completed: number }>;
 
     categories.forEach((cat) => {
       const catTasks = tasks.filter((t) => t.category === cat);
       byCategory[cat] = {
         total: catTasks.length,
-        completed: catTasks.filter((t) => t.status === 'completed').length
+        completed: catTasks.filter((t) => t.status === 'completed').length,
       };
     });
 
@@ -204,11 +201,11 @@ export const StorageService = {
       totalTasks,
       completedTasks,
       completionRate,
-      byCategory
+      byCategory,
     };
   },
 
-  // --- ISSUES ---
+  // ── ISSUES ────────────────────────────────────────────────────────────────────
   async getIssues(): Promise<Issue[]> {
     const issuesStr = await AsyncStorage.getItem(KEYS.ISSUES);
     if (!issuesStr) {
@@ -236,7 +233,6 @@ export const StorageService = {
     const updated = [newIssue, ...issues];
     await this.saveIssues(updated);
 
-    // Create a notification for managers
     const notificationMessage = `${newIssue.reportedBy} reported a ${newIssue.priority} priority ${newIssue.type.replace('_', ' ')} issue in ${newIssue.category.replace('_', ' ')}${newIssue.taskTitle ? ` (Task: ${newIssue.taskTitle})` : ''}.`;
     await this.createNotification(
       'New Issue Reported ⚠️',
@@ -245,13 +241,12 @@ export const StorageService = {
       'issue_reported'
     );
 
-    // Log activity
     await this.logActivity(newIssue.reportedBy, `Reported issue: ${newIssue.description.substring(0, 30)}...`, newIssue.category);
 
     return newIssue;
   },
 
-  // --- TASK PHOTO / PROOF ---
+  // ── TASK PHOTO / PROOF ────────────────────────────────────────────────────────
   async getPhotos(category?: TaskCategory) {
     const photosStr = await AsyncStorage.getItem(KEYS_EXT.TASK_PHOTOS);
     let photos = [] as Array<{ id: string; taskId?: string; category?: TaskCategory; uri: string; reportedBy: string; timestamp: string; location?: { latitude: number; longitude: number } }>;
@@ -260,7 +255,7 @@ export const StorageService = {
       return photos;
     }
     photos = JSON.parse(photosStr);
-    if (category) return photos.filter(p => p.category === category);
+    if (category) return photos.filter((p) => p.category === category);
     return photos;
   },
 
@@ -276,9 +271,8 @@ export const StorageService = {
       category,
       uri,
       reportedBy,
-      timestamp: new Date().toISOString()
-      ,
-      location
+      timestamp: new Date().toISOString(),
+      location,
     };
     const updated = [newPhoto, ...photos].slice(0, 500);
     await this.savePhotos(updated);
@@ -287,12 +281,10 @@ export const StorageService = {
 
   async completeTaskWithPhoto(taskId: string, userName: string, details?: Record<string, any>, imageUri?: string, location?: { latitude: number; longitude: number }) {
     const tasks = await this.getTasks();
-    const taskIndex = tasks.findIndex(t => t.id === taskId);
+    const taskIndex = tasks.findIndex((t) => t.id === taskId);
     if (taskIndex > -1) {
       const task = tasks[taskIndex];
-      // Update details
       tasks[taskIndex].details = { ...tasks[taskIndex].details, ...details };
-      // attach photo URI to task (as proof)
       if (imageUri) {
         tasks[taskIndex].proof = tasks[taskIndex].proof ? [...(tasks[taskIndex].proof as string[]), imageUri] : [imageUri];
       }
@@ -302,14 +294,11 @@ export const StorageService = {
 
       await this.saveTasks(tasks);
 
-      // register photo in gallery
       if (imageUri) {
         await this.addTaskPhoto(taskId, task.category, imageUri, userName, location);
       }
 
-      // Log activity
       await this.logActivity(userName, `Completed "${task.title}" with proof`, task.category);
-      // Create notification
       await this.createNotification(
         'Task Completed ✅',
         `${userName} completed "${task.title}" (${task.category.replace('_', ' ')})`,
@@ -323,13 +312,12 @@ export const StorageService = {
 
   async resolveIssue(issueId: string, resolutionNotes?: string): Promise<Issue[]> {
     const issues = await this.getIssues();
-    const index = issues.findIndex(i => i.id === issueId);
+    const index = issues.findIndex((i) => i.id === issueId);
     if (index > -1) {
       issues[index].status = 'resolved';
       issues[index].resolutionNotes = resolutionNotes;
       await this.saveIssues(issues);
 
-      // Log activity
       const user = await this.getCurrentUser();
       const userName = user ? user.name : 'Manager';
       await this.logActivity(userName, `Resolved issue: ${issues[index].description.substring(0, 30)}...`, issues[index].category);
@@ -337,7 +325,7 @@ export const StorageService = {
     return this.getIssues();
   },
 
-  // --- NOTIFICATIONS ---
+  // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
   async getNotifications(): Promise<Notification[]> {
     const notificationsStr = await AsyncStorage.getItem(KEYS.NOTIFICATIONS);
     if (!notificationsStr) {
@@ -360,17 +348,16 @@ export const StorageService = {
       timestamp: new Date().toISOString(),
       category,
       read: false,
-      type
+      type,
     };
-
-    const updated = [newNotification, ...notifications].slice(0, 50); // limit to 50
+    const updated = [newNotification, ...notifications].slice(0, 50);
     await this.saveNotifications(updated);
     return newNotification;
   },
 
   async markNotificationRead(notificationId: string): Promise<Notification[]> {
     const notifications = await this.getNotifications();
-    const index = notifications.findIndex(n => n.id === notificationId);
+    const index = notifications.findIndex((n) => n.id === notificationId);
     if (index > -1) {
       notifications[index].read = true;
       await this.saveNotifications(notifications);
@@ -380,35 +367,33 @@ export const StorageService = {
 
   async markAllNotificationsRead(): Promise<Notification[]> {
     const notifications = await this.getNotifications();
-    const updated = notifications.map(n => ({ ...n, read: true }));
+    const updated = notifications.map((n) => ({ ...n, read: true }));
     await this.saveNotifications(updated);
     return updated;
   },
 
-  // --- RESCHEDULING ---
+  // ── RESCHEDULING ──────────────────────────────────────────────────────────────
   async rescheduleTask(
-    taskId: string, 
-    newDueDate: string, 
-    newAssignee: string, 
-    newPriority: 'low' | 'medium' | 'high', 
+    taskId: string,
+    newDueDate: string,
+    newAssignee: string,
+    newPriority: 'low' | 'medium' | 'high',
     reason: string
   ): Promise<Task[]> {
     const tasks = await this.getTasks();
-    const taskIndex = tasks.findIndex(t => t.id === taskId);
+    const taskIndex = tasks.findIndex((t) => t.id === taskId);
     if (taskIndex > -1) {
       const task = tasks[taskIndex];
-      
-      // Update task fields
+
       task.originalDueDate = task.originalDueDate || task.dueDate || new Date().toISOString();
       task.dueDate = newDueDate;
       task.assignedTo = newAssignee;
       task.priority = newPriority;
       task.rescheduledReason = reason;
       task.rescheduledAt = new Date().toISOString();
-      
+
       await this.saveTasks(tasks);
 
-      // Create manager/worker notifications
       const notificationMsg = `Task "${task.title}" has been rescheduled to ${new Date(newDueDate).toLocaleDateString()} and assigned to ${newAssignee}. Reason: ${reason}`;
       await this.createNotification(
         'Task Rescheduled 📅',
@@ -417,23 +402,22 @@ export const StorageService = {
         'task_rescheduled'
       );
 
-      // Log activity
       const user = await this.getCurrentUser();
       const userName = user ? user.name : 'Manager';
       await this.logActivity(
-        userName, 
-        `Rescheduled "${task.title}" (assigned to ${newAssignee})`, 
+        userName,
+        `Rescheduled "${task.title}" (assigned to ${newAssignee})`,
         task.category
       );
     }
     return this.getTasks();
   },
 
-  // --- SEED RESET ---
+  // ── SEED RESET ────────────────────────────────────────────────────────────────
   async resetAllData(): Promise<void> {
     await AsyncStorage.removeItem(KEYS.TASKS);
     await AsyncStorage.removeItem(KEYS.ACTIVITIES);
     await AsyncStorage.removeItem(KEYS.ISSUES);
     await AsyncStorage.removeItem(KEYS.NOTIFICATIONS);
-  }
+  },
 };

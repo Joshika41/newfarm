@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Animated as RNAnimated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Bird, Fish, Milk, ShieldAlert, Truck, Wrench, ChevronRight, ClipboardList } from 'lucide-react-native';
+import { Bird, Fish, Milk, ShieldAlert, Truck, Wrench, ChevronRight, ClipboardList, Heart, Waves } from 'lucide-react-native';
 import { useTheme } from '../../hooks/useTheme';
-import { StorageService } from '../../services/storage';
+import { StorageService, isManagerRole } from '../../services/storage';
 import { LoadingScreen } from '../../components/feedback/LoadingScreen';
-import { TaskCategory } from '../../types';
+import { TaskCategory, User } from '../../types';
 
 // ── Department config ─────────────────────────────────────────────────────
 const SECTIONS: {
@@ -19,6 +19,8 @@ const SECTIONS: {
 }[] = [
   { id: 'birds',       title: 'Poultry & Birds',       subtitle: 'Feed, Water, Eggs, Vaccination',         icon: Bird,        color: '#D84315', bg: '#FBE9E7' },
   { id: 'fish',        title: 'Aquaculture & Fish',     subtitle: 'Oxygen, pH, Feeding, Tank cleaning',     icon: Fish,        color: '#0277BD', bg: '#E1F5FE' },
+  { id: 'pond',        title: 'Pond Operations',        subtitle: 'Water Level, Algae clearance, Filters',  icon: Waves,       color: '#0097A7', bg: '#E0F7FA' },
+  { id: 'health',      title: 'Daily Health & Routine', subtitle: 'Diet, Therapy, Vitals, Activity',         icon: Heart,       color: '#00ACC1', bg: '#E0F7FA' },
   { id: 'calves',      title: 'Calves Pen',             subtitle: 'Milk feeding, Vaccines, Weight tracker', icon: Milk,        color: '#6A1B9A', bg: '#F3E5F5' },
   { id: 'cow_shed',    title: 'Dairy Cow Shed',         subtitle: 'Milking, Feed check, Sanitation logs',   icon: ShieldAlert, color: '#00695C', bg: '#E0F2F1' },
   { id: 'vehicles',    title: 'Farm Vehicles',          subtitle: 'Tractors, Trucks, Fuel, Driver logs',    icon: Truck,       color: '#37474F', bg: '#ECEFF1' },
@@ -122,11 +124,14 @@ export default function ChecklistScreen() {
   const router   = useRouter();
   const [statsMap, setStatsMap] = useState<any>(null);
   const [loading, setLoading]   = useState(true);
+  const [user, setUser]         = useState<User | null>(null);
   const headerAnim = useRef(new RNAnimated.Value(0)).current;
 
   useEffect(() => {
     const load = async () => {
       try {
+        const currentUser = await StorageService.getCurrentUser();
+        setUser(currentUser);
         const summary = await StorageService.getSummary();
         setStatsMap(summary.byCategory);
       } catch (e) {
@@ -141,8 +146,13 @@ export default function ChecklistScreen() {
 
   if (loading) return <LoadingScreen message="Loading department checklists…" />;
 
-  const totalCompleted = SECTIONS.reduce((acc, s) => acc + (statsMap?.[s.id]?.completed || 0), 0);
-  const totalTasks     = SECTIONS.reduce((acc, s) => acc + (statsMap?.[s.id]?.total     || 0), 0);
+  // RBAC: Filter sections based on assigned checklists for employees
+  const visibleSections = user && !isManagerRole(user.role)
+    ? SECTIONS.filter(s => (user.assigned_checklists || []).includes(s.id))
+    : SECTIONS;
+
+  const totalCompleted = visibleSections.reduce((acc, s) => acc + (statsMap?.[s.id]?.completed || 0), 0);
+  const totalTasks     = visibleSections.reduce((acc, s) => acc + (statsMap?.[s.id]?.total     || 0), 0);
   const overallPct     = totalTasks > 0 ? Math.round((totalCompleted / totalTasks) * 100) : 0;
 
   return (
@@ -197,7 +207,7 @@ export default function ChecklistScreen() {
 
         {/* ── Department Cards ── */}
         <View style={{ paddingHorizontal: 20 }}>
-          {SECTIONS.map((section, index) => {
+          {visibleSections.map((section, index) => {
             const stats = statsMap?.[section.id] || { completed: 0, total: 0 };
             return (
               <DeptCard

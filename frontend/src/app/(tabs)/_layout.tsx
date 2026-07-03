@@ -1,20 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Tabs } from 'expo-router';
-import { LayoutDashboard, ClipboardCheck, AreaChart, User } from 'lucide-react-native';
+import { LayoutDashboard, ClipboardCheck, AreaChart, User, AlertTriangle } from 'lucide-react-native';
 import { useTheme } from '../../hooks/useTheme';
-import { StorageService } from '../../services/storage';
+import { StorageService, isManagerRole } from '../../services/storage';
 import { Platform } from 'react-native';
 
 export default function TabLayout() {
   const { colors, isDark } = useTheme();
-  const [role, setRole] = useState<'employee' | 'manager' | null>(null);
+  const [isManager, setIsManager] = useState<boolean>(false);
 
   useEffect(() => {
     const fetchRole = async () => {
       try {
         const currentUser = await StorageService.getCurrentUser();
         if (currentUser) {
-          setRole(currentUser.role);
+          setIsManager(isManagerRole(currentUser.role));
         }
       } catch (e) {
         console.error(e);
@@ -67,7 +67,7 @@ export default function TabLayout() {
         name="manager"
         options={{
           title: 'Analytics',
-          href: role === 'manager' ? undefined : null, // Hide tab if employee
+          href: isManager ? undefined : null, // Show only for admin/owner
           tabBarIcon: ({ color, size }) => <AreaChart size={size} color={color} />,
         }}
       />
@@ -76,6 +76,14 @@ export default function TabLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="employeeIssues"
+        options={{
+          title: 'Report Farm Issue',
+          href: isManager ? null : undefined, // Hide for managers, show for employees
+          tabBarIcon: ({ color, size }) => <AlertTriangle color={color} size={size} />,
         }}
       />
     </Tabs>

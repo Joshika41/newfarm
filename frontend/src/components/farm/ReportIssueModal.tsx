@@ -155,7 +155,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           audioBitsPerSecond: 128000,
         },
       };
-      await recording.prepareToRecordAsync(recordingOptions);
+      await recording.prepareToRecordAsync(recordingOptions as any);
       await recording.startAsync();
       setRecording(recording);
     } catch (error) {

@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Rect, G, Text as SvgText, Line, Circle as SvgCircle } from 'react-native-svg';
 import { 
   ShieldCheck, BarChart4, Users, ClipboardCheck, ArrowUpRight, 
-  Bird, Fish, Milk, ShieldAlert, Truck, Wrench, 
+  Bird, Fish, Milk, ShieldAlert, Truck, Wrench, Heart,
   Bell, AlertTriangle, Calendar, Check, CheckCircle2, ChevronRight, X, HelpCircle, Play,
   Image as ImageIcon
 } from 'lucide-react-native';
@@ -28,6 +28,7 @@ const CATEGORIES_INFO: Record<TaskCategory, { label: string; icon: any; color: s
   cow_shed: { label: 'Cow Shed', icon: ShieldAlert, color: '#26A69A' },
   vehicles: { label: 'Vehicles', icon: Truck, color: '#78909C' },
   maintenance: { label: 'Maintenance', icon: Wrench, color: '#8D6E63' },
+  health: { label: 'Health Check', icon: Heart, color: '#00ACC1' },
 };
 
 const WORKERS = ['Silas Green', 'John Carver', 'Clara Fields'];
@@ -1131,7 +1132,7 @@ export default function ManagerDashboardScreen() {
                 <Pressable
                   onPress={async () => {
                     try {
-                      const sound = await Audio.Sound.createAsync({ uri: selectedIssue.audioUri });
+                      const sound = await Audio.Sound.createAsync({ uri: selectedIssue.audioUri! });
                       await sound.sound.playAsync();
                     } catch (error) {
                       console.error('Play issue audio failed', error);

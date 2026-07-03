@@ -10,9 +10,10 @@ import {
   Sun, Wind, Droplets, LogOut, AlertTriangle,
   Bird, Fish, Milk, ShieldAlert, Truck, Wrench,
   Bell, CheckCircle, Clock, MapPin, ChevronRight, X,
+  Heart, Waves,
 } from 'lucide-react-native';
 import { useTheme } from '../../hooks/useTheme';
-import { StorageService } from '../../services/storage';
+import { StorageService, isManagerRole } from '../../services/storage';
 import { Task, User, ActivityLog, TaskCategory } from '../../types';
 import { SearchBar } from '../../components/ui/SearchBar';
 import { TaskCard } from '../../components/farm/TaskCard';
@@ -21,12 +22,16 @@ import { CalendarStrip } from '../../components/feedback/CalendarStrip';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { LoadingScreen } from '../../components/feedback/LoadingScreen';
 import { TaskDetailModal } from '../../components/farm/TaskDetailModal';
-import { ReportIssueModal } from '../../components/farm/ReportIssueModal';
+import { EvidenceUploadSection, GeoPoint } from '../../components/farm/EvidenceUploadSection';
+import { BottomSheet } from '../../components/feedback/BottomSheet';
+
 
 // ── Quick action categories ────────────────────────────────────────────────
 const QUICK_ACTIONS: { id: TaskCategory; label: string; icon: any; color: string; bg: string }[] = [
   { id: 'birds',       label: 'Birds',       icon: Bird,       color: '#D84315', bg: '#FBE9E7' },
   { id: 'fish',        label: 'Fish',        icon: Fish,       color: '#0277BD', bg: '#E1F5FE' },
+  { id: 'pond',        label: 'Pond',        icon: Waves,      color: '#0097A7', bg: '#E0F7FA' },
+  { id: 'health',      label: 'Health Check', icon: Heart,      color: '#00ACC1', bg: '#E0F7FA' },
   { id: 'calves',      label: 'Calves',      icon: Milk,       color: '#6A1B9A', bg: '#F3E5F5' },
   { id: 'cow_shed',    label: 'Cow Shed',    icon: ShieldAlert, color: '#00695C', bg: '#E0F2F1' },
   { id: 'vehicles',    label: 'Vehicles',    icon: Truck,       color: '#37474F', bg: '#ECEFF1' },
@@ -81,6 +86,69 @@ function LogoutDialog({
   );
 }
 
+function getTaskEndTime(task: Task): Date | null {
+  let timeStr = '';
+  
+  if (task.details && typeof task.details.time === 'string') {
+    timeStr = task.details.time;
+  } else {
+    const match = task.title.match(/\(([^)]+)\)/);
+    if (match) {
+      timeStr = match[1];
+    }
+  }
+
+  if (!timeStr) return null;
+
+  timeStr = timeStr.toLowerCase().trim();
+
+  let targetTimePart = timeStr;
+  if (timeStr.includes('to')) {
+    const parts = timeStr.split('to');
+    targetTimePart = parts[parts.length - 1].trim();
+  } else if (timeStr.includes('-')) {
+    const parts = timeStr.split('-');
+    targetTimePart = parts[parts.length - 1].trim();
+  }
+
+  targetTimePart = targetTimePart.replace(/\.+$/, '').trim();
+
+  if (targetTimePart === 'morning') {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    return d;
+  }
+  if (targetTimePart === 'evening') {
+    const d = new Date();
+    d.setHours(18, 0, 0, 0);
+    return d;
+  }
+  if (targetTimePart === 'anytime') {
+    return null;
+  }
+
+  const timeRegex = /(\d+)(?:[:.](\d+))?\s*(am|pm|a\.m|p\.m|a\.m\.|p\.m\.)/i;
+  const match = targetTimePart.match(timeRegex);
+  if (!match) return null;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2] ? parseInt(match[2], 10) : 0;
+  const ampm = match[3].toLowerCase();
+
+  const isPm = ampm.includes('p');
+  const isAm = ampm.includes('a');
+
+  if (isPm && hours < 12) {
+    hours += 12;
+  } else if (isAm && hours === 12) {
+    hours = 0;
+  }
+
+  const d = new Date();
+  d.setHours(hours, minutes, 0, 0);
+  return d;
+}
+
 // ── Main Screen ───────────────────────────────────────────────────────────
 export default function DashboardScreen() {
   const { colors, isDark } = useTheme();
@@ -95,11 +163,14 @@ export default function DashboardScreen() {
   const [selectedCategory, setSelectedCategory] = useState<TaskCategory | null>(null);
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<Task | null>(null);
   const [taskDetailVisible, setTaskDetailVisible]   = useState(false);
-  const [reportIssueVisible, setReportIssueVisible] = useState(false);
-  const [reportedIssueTask, setReportedIssueTask]   = useState<Task | null>(null);
   const [logoutVisible, setLogoutVisible]           = useState(false);
   const [currentTime, setCurrentTime]               = useState(new Date());
   const [locationLabel, setLocationLabel]           = useState('Sunnybrook Farm');
+
+  const [photoUploadVisible, setPhotoUploadVisible] = useState(false);
+  const [taskToComplete, setTaskToComplete] = useState<Task | null>(null);
+  const [uploadImageUri, setUploadImageUri] = useState<string | null>(null);
+  const [uploadLocation, setUploadLocation] = useState<GeoPoint | null>(null);
 
   const headerAnim = useRef(new RNAnimated.Value(0)).current;
 
@@ -159,16 +230,12 @@ export default function DashboardScreen() {
     const task = typeof taskInput === 'string' ? tasks.find((item) => item.id === taskInput) : taskInput;
     if (!task) return;
 
-    const requiresChecklist = task.status === 'pending' && ['birds', 'fish'].includes(task.category);
+    const requiresChecklist = task.status === 'pending' && ['birds', 'fish', 'health'].includes(task.category);
     if (requiresChecklist) {
-      Alert.alert(
-        'Photo Proof Required',
-        'This task requires photo proof. Please complete it from the checklist screen.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Open Checklist', onPress: () => router.push(task.category === 'birds' ? '/checklist/birds' : '/checklist/fish') },
-        ]
-      );
+      setTaskToComplete(task);
+      setUploadImageUri(null);
+      setUploadLocation(null);
+      setPhotoUploadVisible(true);
       return;
     }
 
@@ -185,24 +252,92 @@ export default function DashboardScreen() {
   }, []);
 
   const handlePressTask = useCallback((task: Task) => {
-    if (task.status === 'pending' && (task.category === 'birds' || task.category === 'fish')) {
-      router.push(task.category === 'birds' ? '/checklist/birds' : '/checklist/fish');
+    if (task.status === 'pending' && (task.category === 'birds' || task.category === 'fish' || task.category === 'health')) {
+      setTaskToComplete(task);
+      setUploadImageUri(null);
+      setUploadLocation(null);
+      setPhotoUploadVisible(true);
       return;
     }
     setSelectedTaskDetail(task);
     setTaskDetailVisible(true);
   }, []);
 
+  const handleCompleteTaskWithPhoto = async () => {
+    if (!taskToComplete || !user) return;
+    if (!uploadImageUri) {
+      Alert.alert('Photo Required', 'Please attach a photo proof before completing the task.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const updatedTasks = await StorageService.completeTaskWithPhoto(
+        taskToComplete.id,
+        user.name,
+        {}, // details
+        uploadImageUri,
+        uploadLocation || undefined
+      );
+      setTasks(updatedTasks);
+      const recentActivities = await StorageService.getActivities();
+      setActivities(recentActivities);
+      setPhotoUploadVisible(false);
+      setTaskToComplete(null);
+      Alert.alert('Success', `Task "${taskToComplete.title}" completed successfully.`);
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error', 'Failed to complete task.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
+      // Hide other categories if employee role is active
+      const isEmployee = user && !isManagerRole(user.role);
+      const isAssigned = isEmployee 
+        ? (user.assigned_checklists || []).includes(task.category)
+        : true;
+      if (!isAssigned) return false;
+
       const matchesSearch   = task.title.toLowerCase().includes(query.toLowerCase());
       const matchesCategory = selectedCategory ? task.category === selectedCategory : true;
       return matchesSearch && matchesCategory;
     });
-  }, [tasks, query, selectedCategory]);
+  }, [tasks, query, selectedCategory, user]);
+
+  const groupedTasks = useMemo(() => {
+    const completed: Task[] = [];
+    const pending: Task[] = [];
+    const missed: Task[] = [];
+
+    const now = new Date();
+
+    filteredTasks.forEach((task) => {
+      if (task.status === 'completed') {
+        completed.push(task);
+      } else {
+        const endTime = getTaskEndTime(task);
+        if (endTime && now > endTime) {
+          missed.push(task);
+        } else {
+          pending.push(task);
+        }
+      }
+    });
+
+    return { completed, pending, missed };
+  }, [filteredTasks]);
 
   const completedCount = tasks.filter((t) => t.status === 'completed').length;
   const totalCount     = tasks.length;
+
+  // RBAC: Filter quick actions for employees to only show their assigned checklists
+  const visibleQuickActions = user && !isManagerRole(user.role)
+    ? QUICK_ACTIONS.filter(act => (user.assigned_checklists || []).includes(act.id))
+    : QUICK_ACTIONS;
 
   // Greeting based on time
   const hour = new Date().getHours();
@@ -233,15 +368,6 @@ export default function DashboardScreen() {
             <Text style={s.name}>{user?.name?.split(' ')[0]} 👋</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            {/* Report Issue */}
-            <Pressable
-              onPress={() => { setReportedIssueTask(null); setReportIssueVisible(true); }}
-              style={({ pressed }) => [s.headerBtn, { opacity: pressed ? 0.75 : 1 }]}
-            >
-              <View style={[s.headerBtnBadge, { backgroundColor: colors.warningLight }]}>
-                <AlertTriangle size={18} color={colors.warning} />
-              </View>
-            </Pressable>
             {/* Sign Out */}
             <Pressable
               onPress={() => setLogoutVisible(true)}
@@ -290,41 +416,45 @@ export default function DashboardScreen() {
           <ProgressCard completed={completedCount} total={totalCount} />
 
           {/* ── Quick Actions ── */}
-          <Text style={[s.sectionTitle, { color: colors.text }]}>Quick Actions</Text>
-          <View style={s.quickGrid}>
-            {QUICK_ACTIONS.map((act) => {
-              const Icon = act.icon;
-              const isActive = selectedCategory === act.id;
-              return (
-                <Pressable
-                  key={act.id}
-                  onPress={() => setSelectedCategory(isActive ? null : act.id)}
-                  style={({ pressed }) => [
-                    s.quickBtn,
-                    {
-                      backgroundColor: isActive ? act.color : colors.card,
-                      borderColor: isActive ? act.color : colors.cardBorder,
-                      opacity: pressed ? 0.82 : 1,
-                      transform: [{ scale: pressed ? 0.95 : 1 }],
-                    },
-                  ]}
-                >
-                  <View style={[
-                    s.quickIconWrap,
-                    { backgroundColor: isActive ? 'rgba(255,255,255,0.22)' : act.bg },
-                  ]}>
-                    <Icon size={22} color={isActive ? '#FFFFFF' : act.color} />
-                  </View>
-                  <Text style={[
-                    s.quickLabel,
-                    { color: isActive ? '#FFFFFF' : colors.text },
-                  ]} numberOfLines={1}>
-                    {act.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          {user && isManagerRole(user.role) && (
+            <>
+              <Text style={[s.sectionTitle, { color: colors.text }]}>Quick Actions</Text>
+              <View style={s.quickGrid}>
+                {visibleQuickActions.map((act) => {
+                  const Icon = act.icon;
+                  const isActive = selectedCategory === act.id;
+                  return (
+                    <Pressable
+                      key={act.id}
+                      onPress={() => setSelectedCategory(isActive ? null : act.id)}
+                      style={({ pressed }) => [
+                        s.quickBtn,
+                        {
+                          backgroundColor: isActive ? act.color : colors.card,
+                          borderColor: isActive ? act.color : colors.cardBorder,
+                          opacity: pressed ? 0.82 : 1,
+                          transform: [{ scale: pressed ? 0.95 : 1 }],
+                        },
+                      ]}
+                    >
+                      <View style={[
+                        s.quickIconWrap,
+                        { backgroundColor: isActive ? 'rgba(255,255,255,0.22)' : act.bg },
+                      ]}>
+                        <Icon size={22} color={isActive ? '#FFFFFF' : act.color} />
+                      </View>
+                      <Text style={[
+                        s.quickLabel,
+                        { color: isActive ? '#FFFFFF' : colors.text },
+                      ]} numberOfLines={1}>
+                        {act.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           {/* ── Task List ── */}
           <View style={s.taskListHeader}>
@@ -346,21 +476,77 @@ export default function DashboardScreen() {
               onQueryChange={setQuery}
               selectedCategory={selectedCategory}
               onCategoryChange={setSelectedCategory}
+              allowedCategories={user && !isManagerRole(user.role) ? user.assigned_checklists : undefined}
             />
           </View>
 
           {filteredTasks.length === 0 ? (
             <EmptyState />
           ) : (
-            filteredTasks.map((item, idx) => (
-              <TaskCard
-                key={item.id}
-                task={item}
-                onToggle={() => handleToggleTask(item)}
-                onPress={() => handlePressTask(item)}
-                delay={idx * 40}
-              />
-            ))
+            <View>
+              {/* Completed Section */}
+              {groupedTasks.completed.length > 0 && (
+                <View style={s.categorySection}>
+                  <View style={s.categoryHeaderRow}>
+                    <CheckCircle size={14} color={colors.primary} />
+                    <Text style={[s.categoryLabel, { color: colors.primary }]}>
+                      Completed ({groupedTasks.completed.length})
+                    </Text>
+                  </View>
+                  {groupedTasks.completed.map((item, idx) => (
+                    <TaskCard
+                      key={item.id}
+                      task={item}
+                      onToggle={() => handleToggleTask(item)}
+                      onPress={() => handlePressTask(item)}
+                      delay={idx * 40}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* Pending Section */}
+              {groupedTasks.pending.length > 0 && (
+                <View style={s.categorySection}>
+                  <View style={s.categoryHeaderRow}>
+                    <Clock size={14} color={colors.accent} />
+                    <Text style={[s.categoryLabel, { color: colors.accent }]}>
+                      Pending ({groupedTasks.pending.length})
+                    </Text>
+                  </View>
+                  {groupedTasks.pending.map((item, idx) => (
+                    <TaskCard
+                      key={item.id}
+                      task={item}
+                      onToggle={() => handleToggleTask(item)}
+                      onPress={() => handlePressTask(item)}
+                      delay={(groupedTasks.completed.length + idx) * 40}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* Missed Section */}
+              {groupedTasks.missed.length > 0 && (
+                <View style={s.categorySection}>
+                  <View style={s.categoryHeaderRow}>
+                    <AlertTriangle size={14} color={colors.dangerMid} />
+                    <Text style={[s.categoryLabel, { color: colors.dangerMid }]}>
+                      Missed ({groupedTasks.missed.length})
+                    </Text>
+                  </View>
+                  {groupedTasks.missed.map((item, idx) => (
+                    <TaskCard
+                      key={item.id}
+                      task={item}
+                      onToggle={() => handleToggleTask(item)}
+                      onPress={() => handlePressTask(item)}
+                      delay={(groupedTasks.completed.length + groupedTasks.pending.length + idx) * 40}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
           )}
 
           {/* ── Activity Feed ── */}
@@ -412,21 +598,76 @@ export default function DashboardScreen() {
           }
         }}
         onReportIssue={() => {
-          setReportedIssueTask(selectedTaskDetail);
+          // Report issue handled via the dedicated Employee tab
           setTaskDetailVisible(false);
-          setReportIssueVisible(true);
         }}
         onNotesSaved={fetchData}
       />
 
-      {/* ── Report Issue ── */}
-      <ReportIssueModal
-        visible={reportIssueVisible}
-        onClose={() => { setReportIssueVisible(false); setReportedIssueTask(null); }}
-        onSubmitSuccess={fetchData}
-        task={reportedIssueTask}
-        userName={user?.name || 'Worker'}
-      />
+      {/* ── Photo Upload Modal ── */}
+      <BottomSheet
+        visible={photoUploadVisible}
+        onClose={() => {
+          setPhotoUploadVisible(false);
+          setTaskToComplete(null);
+        }}
+        title="Upload Task Proof"
+      >
+        <View style={{ paddingBottom: 24 }}>
+          {taskToComplete && (
+            <>
+              <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: 6 }}>
+                {taskToComplete.title}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 16 }}>
+                Category: {taskToComplete.category.toUpperCase()}
+              </Text>
+              
+              <EvidenceUploadSection
+                imageUri={uploadImageUri}
+                onImageUriChange={setUploadImageUri}
+                imageLocation={uploadLocation}
+                onImageLocationChange={setUploadLocation}
+                required
+              />
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+                <Pressable
+                  onPress={() => {
+                    setPhotoUploadVisible(false);
+                    setTaskToComplete(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.card,
+                    borderColor: colors.cardBorder,
+                    borderWidth: 1,
+                    paddingVertical: 14,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: colors.textSecondary, fontWeight: '700' }}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleCompleteTaskWithPhoto}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.primary,
+                    paddingVertical: 14,
+                    borderRadius: 14,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Complete Task</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      </BottomSheet>
+
+
     </SafeAreaView>
   );
 }
@@ -603,5 +844,21 @@ const dashStyles = (colors: any, isDark: boolean) => StyleSheet.create({
   activityTimeTxt: {
     fontSize: 10,
     fontWeight: '700',
+  },
+  categorySection: {
+    marginBottom: 16,
+  },
+  categoryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  categoryLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 });

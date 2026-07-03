@@ -6,8 +6,9 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Fish, ArrowLeft, Waves, Droplet, Activity, CheckCircle2, ChevronRight, AlertTriangle } from 'lucide-react-native';
 import { useTheme } from '../../hooks/useTheme';
-import { StorageService } from '../../services/storage';
-import { Task, User } from '../../types';
+import { StorageService, isManagerRole } from '../../services/storage';
+import { Task, User, TaskCategory } from '../../types';
+import { EvidenceUploadSection, GeoPoint } from '../../components/farm/EvidenceUploadSection';
 import { AppCard } from '../../components/ui/AppCard';
 import { AppButton } from '../../components/ui/AppButton';
 import { BottomSheet } from '../../components/feedback/BottomSheet';
@@ -28,6 +29,11 @@ export default function FishChecklistScreen() {
   const [sheetVisible, setSheetVisible] = useState(false);
   const [reportIssueVisible, setReportIssueVisible] = useState(false);
 
+  // Shared evidence (compulsory for every task completion)
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [imageLocation, setImageLocation] = useState<GeoPoint | null>(null);
+
+
   const fetchFishData = async () => {
     try {
       const u = await StorageService.getCurrentUser();
@@ -35,6 +41,17 @@ export default function FishChecklistScreen() {
         router.replace('/login');
         return;
       }
+
+      // RBAC: Check if employee has access to fish checklist
+      if (!isManagerRole(u.role) && !(u.assigned_checklists || []).includes('fish')) {
+        Alert.alert(
+          'Access Denied',
+          'You are not assigned to the Fish checklist.',
+          [{ text: 'Go Back', onPress: () => router.back() }]
+        );
+        return;
+      }
+
       setUser(u);
 
       const allTasks = await StorageService.getTasks();
@@ -73,8 +90,11 @@ export default function FishChecklistScreen() {
 
   const handleOpenForm = (task: Task) => {
     setActiveTask(task);
+    setImageUri(null);
+    setImageLocation(null);
     setSheetVisible(true);
   };
+
 
   const handleCloseForm = () => {
     setActiveTask(null);
@@ -87,17 +107,66 @@ export default function FishChecklistScreen() {
 
     switch (activeTask.subcategory) {
       case 'Feeding':
-        return <FeedingForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return (
+          <FeedingForm
+            task={activeTask}
+            user={user}
+            onComplete={onFormSuccess}
+            imageUri={imageUri}
+            imageLocation={imageLocation}
+          />
+        );
       case 'Water Quality':
-        return <WaterQualityForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return (
+          <WaterQualityForm
+            task={activeTask}
+            user={user}
+            onComplete={onFormSuccess}
+            imageUri={imageUri}
+            imageLocation={imageLocation}
+          />
+        );
       case 'Oxygen':
-        return <OxygenForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return (
+          <OxygenForm
+            task={activeTask}
+            user={user}
+            onComplete={onFormSuccess}
+            imageUri={imageUri}
+            imageLocation={imageLocation}
+          />
+        );
       case 'Medicine':
-        return <MedicineForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return (
+          <MedicineForm
+            task={activeTask}
+            user={user}
+            onComplete={onFormSuccess}
+            imageUri={imageUri}
+            imageLocation={imageLocation}
+          />
+        );
       case 'Harvest':
-        return <HarvestForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return (
+          <HarvestForm
+            task={activeTask}
+            user={user}
+            onComplete={onFormSuccess}
+            imageUri={imageUri}
+            imageLocation={imageLocation}
+          />
+        );
       default:
-        return <GenericNotesForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return (
+          <GenericNotesForm
+            task={activeTask}
+            user={user}
+            onComplete={onFormSuccess}
+            imageUri={imageUri}
+            imageLocation={imageLocation}
+          />
+        );
+
     }
   };
 
@@ -228,9 +297,18 @@ export default function FishChecklistScreen() {
         title={activeTask ? `${activeTask.title}` : ''}
       >
         <View className="space-y-4">
+          <EvidenceUploadSection
+            imageUri={imageUri}
+            onImageUriChange={setImageUri}
+            imageLocation={imageLocation}
+            onImageLocationChange={setImageLocation}
+            required
+          />
+
           {renderChecklistForm()}
           
           <View className="h-[1px] bg-brown-200/5 dark:bg-white/5 my-1" />
+
           <Pressable
             onPress={() => {
               setReportIssueVisible(true);
@@ -271,7 +349,10 @@ interface FishFormProps {
   task: Task;
   user: User | null;
   onComplete: () => void;
+  imageUri: string | null;
+  imageLocation: GeoPoint | null;
 }
+
 
 // 1. FEEDING FORM
 const FeedingForm: React.FC<FishFormProps> = ({ task, user, onComplete }) => {

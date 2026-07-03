@@ -7,20 +7,24 @@ import Animated, {
   withTiming,
   interpolateColor,
 } from 'react-native-reanimated';
-import { Bird, Fish, Milk, ShieldAlert, Truck, Wrench, Check, Clock, User } from 'lucide-react-native';
+import { Bird, Fish, Milk, ShieldAlert, Truck, Wrench, Check, Clock, User, Heart, Waves } from 'lucide-react-native';
 import { useTheme } from '../../hooks/useTheme';
 import { Task } from '../../types';
 
 interface TaskCardProps {
   task: Task;
+  // onToggle is kept for backward compatibility but checkbox no longer toggles status directly.
   onToggle: () => void;
   onPress?: () => void;
   delay?: number;
 }
 
+
 const CATEGORY_META: Record<string, { icon: any; color: string; bg: string; label: string }> = {
   birds:       { icon: Bird,       color: '#D84315', bg: '#FBE9E7', label: 'Poultry' },
   fish:        { icon: Fish,       color: '#0277BD', bg: '#E1F5FE', label: 'Aquaculture' },
+  pond:        { icon: Waves,      color: '#0097A7', bg: '#E0F7FA', label: 'Pond' },
+  health:      { icon: Heart,      color: '#00ACC1', bg: '#E0F7FA', label: 'Health' },
   calves:      { icon: Milk,       color: '#6A1B9A', bg: '#F3E5F5', label: 'Calves Pen' },
   cow_shed:    { icon: ShieldAlert, color: '#00695C', bg: '#E0F2F1', label: 'Dairy Shed' },
   vehicles:    { icon: Truck,       color: '#37474F', bg: '#ECEFF1', label: 'Vehicles' },
@@ -98,7 +102,10 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onPress, del
         <View style={s.inner}>
           {/* ── Checkbox ── */}
           <Pressable
-            onPress={onToggle}
+            onPress={() => {
+              // Intentionally no-op: completion is handled by tapping the task (onPress)
+              // so the user can provide photo + GPS + notes before completing.
+            }}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             style={{ marginRight: 12 }}
           >
@@ -133,6 +140,16 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onPress, del
                   <User size={10} color={colors.textMuted} />
                   <Text style={[s.assigneeTxt, { color: colors.textMuted, fontFamily: 'Inter_400Regular' }]}>
                     {' '}{task.assignedTo.split(' ')[0]}
+                  </Text>
+                </View>
+              )}
+
+              {/* Time Slot */}
+              {task.details?.time && (
+                <View style={[s.chip, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }]}>
+                  <Clock size={11} color={colors.textSecondary} />
+                  <Text style={[s.chipTxt, { color: colors.textSecondary, fontFamily: 'Inter_400Regular' }]}>
+                    {' '}{task.details.time}
                   </Text>
                 </View>
               )}

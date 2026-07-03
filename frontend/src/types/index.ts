@@ -3,13 +3,14 @@ export interface User {
   name: string;
   username: string;
   email?: string;
-  password?: string;
-  role: 'employee' | 'manager';
-  department?: 'birds' | 'fish' | 'calves' | 'cow_shed' | 'vehicles' | 'maintenance' | 'pond';
+  password?: string;  // Only used for demo fallback; never stored in production
+  role: 'employee' | 'admin' | 'owner' | 'manager'; // manager kept for legacy mock compatibility
+  department?: 'birds' | 'fish' | 'calves' | 'cow_shed' | 'vehicles' | 'maintenance' | 'pond' | 'health';
+  assigned_checklists?: TaskCategory[];  // RBAC: categories this user can access
   avatar?: string;
 }
 
-export type TaskCategory = 'birds' | 'fish' | 'calves' | 'cow_shed' | 'vehicles' | 'maintenance' | 'pond';
+export type TaskCategory = 'birds' | 'fish' | 'calves' | 'cow_shed' | 'vehicles' | 'maintenance' | 'pond' | 'health';
 
 export interface Task {
   id: string;
@@ -77,4 +78,17 @@ export interface WeatherData {
   condition: string; // e.g., 'Sunny', 'Rainy', 'Cloudy'
   humidity: number;
   windSpeed: number;
+}
+
+// Auth API response types
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: {
+    id: string;
+    username: string;
+    name: string;
+    role: 'employee' | 'admin' | 'owner';
+    assigned_checklists: TaskCategory[];
+  };
 }

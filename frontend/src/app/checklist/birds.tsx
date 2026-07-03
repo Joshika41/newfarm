@@ -8,7 +8,7 @@ import { Bird, ArrowLeft, Egg, Scale, Info, CheckCircle2, ChevronRight, AlertTri
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useTheme } from '../../hooks/useTheme';
-import { StorageService } from '../../services/storage';
+import { StorageService, isManagerRole } from '../../services/storage';
 import { Task, User } from '../../types';
 import { AppCard } from '../../components/ui/AppCard';
 import { AppButton } from '../../components/ui/AppButton';
@@ -17,6 +17,7 @@ import { LoadingScreen } from '../../components/feedback/LoadingScreen';
 import { TaskCard } from '../../components/farm/TaskCard';
 import * as schemas from '../../types/schemas';
 import { ReportIssueModal } from '../../components/farm/ReportIssueModal';
+import { EvidenceUploadSection, GeoPoint } from '../../components/farm/EvidenceUploadSection';
 
 export default function BirdsChecklistScreen() {
   const { colors, isDark } = useTheme();
@@ -30,6 +31,11 @@ export default function BirdsChecklistScreen() {
   const [sheetVisible, setSheetVisible] = useState(false);
   const [reportIssueVisible, setReportIssueVisible] = useState(false);
 
+  // Shared evidence (applies to every task completion)
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [imageLocation, setImageLocation] = useState<GeoPoint | null>(null);
+
+
   const fetchBirdsData = async () => {
     try {
       const u = await StorageService.getCurrentUser();
@@ -37,6 +43,17 @@ export default function BirdsChecklistScreen() {
         router.replace('/login');
         return;
       }
+
+      // RBAC: Check if employee has access to birds checklist
+      if (!isManagerRole(u.role) && !(u.assigned_checklists || []).includes('birds')) {
+        Alert.alert(
+          'Access Denied',
+          'You are not assigned to the Birds checklist.',
+          [{ text: 'Go Back', onPress: () => router.back() }]
+        );
+        return;
+      }
+
       setUser(u);
 
       const allTasks = await StorageService.getTasks();
@@ -75,6 +92,9 @@ export default function BirdsChecklistScreen() {
 
   const handleOpenForm = (task: Task) => {
     setActiveTask(task);
+    // reset evidence for a new task completion
+    setImageUri(null);
+    setImageLocation(null);
     setSheetVisible(true);
   };
 
@@ -89,17 +109,18 @@ export default function BirdsChecklistScreen() {
 
     switch (activeTask.subcategory) {
       case 'Feed':
-        return <FeedForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return <FeedForm task={activeTask} user={user} onComplete={onFormSuccess} imageUri={imageUri} imageLocation={imageLocation} />;
       case 'Mortality':
-        return <MortalityForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return <MortalityForm task={activeTask} user={user} onComplete={onFormSuccess} imageUri={imageUri} imageLocation={imageLocation} />;
       case 'Egg Collection':
-        return <EggForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return <EggForm task={activeTask} user={user} onComplete={onFormSuccess} imageUri={imageUri} imageLocation={imageLocation} />;
       case 'Vaccination':
-        return <VaccineForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return <VaccineForm task={activeTask} user={user} onComplete={onFormSuccess} imageUri={imageUri} imageLocation={imageLocation} />;
       case 'Medicine':
-        return <MedicineForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return <MedicineForm task={activeTask} user={user} onComplete={onFormSuccess} imageUri={imageUri} imageLocation={imageLocation} />;
       default:
-        return <GenericNotesForm task={activeTask} user={user} onComplete={onFormSuccess} />;
+        return <GenericNotesForm task={activeTask} user={user} onComplete={onFormSuccess} imageUri={imageUri} imageLocation={imageLocation} />;
+
     }
   };
 
@@ -230,6 +251,15 @@ export default function BirdsChecklistScreen() {
         title={activeTask ? `${activeTask.title}` : ''}
       >
         <View className="space-y-4">
+          {/* Unified evidence UI for every task completion */}
+          <EvidenceUploadSection
+            imageUri={imageUri}
+            onImageUriChange={setImageUri}
+            imageLocation={imageLocation}
+            onImageLocationChange={setImageLocation}
+            required
+          />
+
           {renderChecklistForm()}
           
           <View className="h-[1px] bg-brown-200/5 dark:bg-white/5 my-1" />
@@ -247,6 +277,7 @@ export default function BirdsChecklistScreen() {
           </Pressable>
         </View>
       </BottomSheet>
+
 
       {/* Report issue modal */}
       <ReportIssueModal
@@ -273,14 +304,15 @@ interface FormProps {
   task: Task;
   user: User | null;
   onComplete: () => void;
+  // unified evidence
+  imageUri: string | null;
+  imageLocation: GeoPoint | null;
 }
 
 // 1. FEED FORM
-const FeedForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
+const FeedForm: React.FC<FormProps> = ({ task, user, onComplete, imageUri, imageLocation }) => {
   const { colors, isDark } = useTheme();
-  const [imageUri, setImageUri] = useState<string | null>(null);
-  const [imageLocation, setImageLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  
+
   const { control, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(schemas.birdsFeedSchema),
     defaultValues: { feedPounds: task.details?.feedPounds ? String(task.details.feedPounds) : '' },
@@ -292,7 +324,13 @@ const FeedForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
       Alert.alert('Photo Required', 'Please attach a photo proof before completing the task.');
       return;
     }
-    await StorageService.completeTaskWithPhoto(task.id, user.name, { feedPounds: Number(data.feedPounds) }, imageUri, imageLocation || undefined);
+    await StorageService.completeTaskWithPhoto(
+      task.id,
+      user.name,
+      { feedPounds: Number(data.feedPounds) },
+      imageUri,
+      imageLocation || undefined
+    );
     onComplete();
   };
 
@@ -312,11 +350,11 @@ const FeedForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
             onBlur={onBlur}
             placeholder="e.g. 120"
             placeholderTextColor={colors.textSecondary}
-            style={{ 
-              color: colors.text, 
+            style={{
+              color: colors.text,
               backgroundColor: colors.background,
               borderColor: errors.feedPounds ? colors.danger : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.08)'),
-              borderWidth: 1 
+              borderWidth: 1,
             }}
             className="h-14 rounded-xl px-4 text-sm font-semibold mb-1"
           />
@@ -327,80 +365,19 @@ const FeedForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
           {errors.feedPounds.message as string}
         </Text>
       )}
-      <View className="mt-4">
-        {imageUri ? (
-          <View className="relative w-full h-36 rounded-2xl overflow-hidden mb-3">
-            <Image source={{ uri: imageUri }} className="w-full h-full object-cover" />
-            <Pressable onPress={() => { setImageUri(null); setImageLocation(null); }} style={{ backgroundColor: colors.danger }} className="absolute top-3 right-3 w-8 h-8 rounded-full items-center justify-center">
-              <Trash2 size={16} color="#FFFFFF" />
-            </Pressable>
-          </View>
-        ) : (
-          <View className="flex-row space-x-3 mb-3">
-            <Pressable onPress={async () => {
-              if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestCameraPermissionsAsync();
-                if (status !== 'granted') { Alert.alert('Permission', 'Camera permission required'); return; }
-              }
-              const res = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4,3], quality: 0.6 });
-              if (!res.canceled && res.assets && res.assets.length>0) {
-                const uri = res.assets[0].uri;
-                setImageUri(uri);
-                try {
-                  if (Platform.OS !== 'web') {
-                    const { status } = await Location.requestForegroundPermissionsAsync();
-                    if (status === 'granted') {
-                      const loc = await Location.getCurrentPositionAsync({});
-                      setImageLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Location capture failed', e);
-                }
-              }
-            }} style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth:1 }} className="flex-1 py-3 rounded-xl items-center justify-center">
-              <Camera size={16} color={colors.primary} className="mr-2" />
-              <Text style={{ color: colors.text }} className="text-xs font-bold">Take Photo</Text>
-            </Pressable>
-            <Pressable onPress={async () => {
-              if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') { Alert.alert('Permission', 'Photo library permission required'); return; }
-              }
-              const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing:true, aspect:[4,3], quality:0.6 });
-              if (!res.canceled && res.assets && res.assets.length>0) {
-                const uri = res.assets[0].uri;
-                setImageUri(uri);
-                try {
-                  if (Platform.OS !== 'web') {
-                    const { status } = await Location.requestForegroundPermissionsAsync();
-                    if (status === 'granted') {
-                      const loc = await Location.getCurrentPositionAsync({});
-                      setImageLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Location capture failed', e);
-                }
-              }
-            }} style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth:1 }} className="flex-1 py-3 rounded-xl items-center justify-center">
-              <Text style={{ color: colors.text }} className="text-xs font-bold">Upload Photo</Text>
-            </Pressable>
-          </View>
-        )}
-        <AppButton label="Save & Complete Task" onPress={handleSubmit(onSubmit)} className="w-full" />
-      </View>
+
+      <AppButton label="Save & Complete Task" onPress={handleSubmit(onSubmit)} className="w-full" />
     </View>
   );
 };
 
+
 // 2. MORTALITY FORM
-const MortalityForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
+const MortalityForm: React.FC<FormProps> = ({ task, user, onComplete, imageUri, imageLocation }) => {
   const { colors, isDark } = useTheme();
-  const [imageUri, setImageUri] = useState<string | null>(null);
-  const [imageLocation, setImageLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   
   const { control, handleSubmit, formState: { errors } } = useForm({
+
     resolver: zodResolver(schemas.birdsMortalitySchema),
     defaultValues: { mortalityCount: task.details?.mortalityCount ? String(task.details.mortalityCount) : '0' },
   });
@@ -452,79 +429,15 @@ const MortalityForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
           {errors.mortalityCount.message as string}
         </Text>
       )}
-      <View className="mt-4">
-        {imageUri ? (
-          <View className="relative w-full h-36 rounded-2xl overflow-hidden mb-3">
-            <Image source={{ uri: imageUri }} className="w-full h-full object-cover" />
-            <Pressable onPress={() => { setImageUri(null); setImageLocation(null); }} style={{ backgroundColor: colors.danger }} className="absolute top-3 right-3 w-8 h-8 rounded-full items-center justify-center">
-              <Trash2 size={16} color="#FFFFFF" />
-            </Pressable>
-          </View>
-        ) : (
-          <View className="flex-row space-x-3 mb-3">
-            <Pressable onPress={async () => {
-              if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestCameraPermissionsAsync();
-                if (status !== 'granted') { Alert.alert('Permission', 'Camera permission required'); return; }
-              }
-              const res = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4,3], quality: 0.6 });
-              if (!res.canceled && res.assets && res.assets.length>0) {
-                const uri = res.assets[0].uri;
-                setImageUri(uri);
-                try {
-                  if (Platform.OS !== 'web') {
-                    const { status } = await Location.requestForegroundPermissionsAsync();
-                    if (status === 'granted') {
-                      const loc = await Location.getCurrentPositionAsync({});
-                      setImageLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Location capture failed', e);
-                }
-              }
-            }} style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth:1 }} className="flex-1 py-3 rounded-xl items-center justify-center">
-              <Camera size={16} color={colors.primary} className="mr-2" />
-              <Text style={{ color: colors.text }} className="text-xs font-bold">Take Photo</Text>
-            </Pressable>
-            <Pressable onPress={async () => {
-              if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') { Alert.alert('Permission', 'Photo library permission required'); return; }
-              }
-              const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing:true, aspect:[4,3], quality:0.6 });
-              if (!res.canceled && res.assets && res.assets.length>0) {
-                const uri = res.assets[0].uri;
-                setImageUri(uri);
-                try {
-                  if (Platform.OS !== 'web') {
-                    const { status } = await Location.requestForegroundPermissionsAsync();
-                    if (status === 'granted') {
-                      const loc = await Location.getCurrentPositionAsync({});
-                      setImageLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Location capture failed', e);
-                }
-              }
-            }} style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth:1 }} className="flex-1 py-3 rounded-xl items-center justify-center">
-              <Text style={{ color: colors.text }} className="text-xs font-bold">Upload Photo</Text>
-            </Pressable>
-          </View>
-        )}
-        <AppButton label="Save & Complete Task" onPress={handleSubmit(onSubmit)} className="w-full" />
-      </View>
+      <AppButton label="Save & Complete Task" onPress={handleSubmit(onSubmit)} className="w-full" />
     </View>
   );
 };
 
 // 3. EGG COLLECTION FORM
-const EggForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
+const EggForm: React.FC<FormProps> = ({ task, user, onComplete, imageUri, imageLocation }) => {
   const { colors, isDark } = useTheme();
-  const [imageUri, setImageUri] = useState<string | null>(null);
-  const [imageLocation, setImageLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  
+
   const { control, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(schemas.birdsEggCollectionSchema),
     defaultValues: { 
@@ -609,70 +522,7 @@ const EggForm: React.FC<FormProps> = ({ task, user, onComplete }) => {
           {errors.crackedCount.message as string}
         </Text>
       )}
-
-      <View className="mt-4">
-        {imageUri ? (
-          <View className="relative w-full h-36 rounded-2xl overflow-hidden mb-3">
-            <Image source={{ uri: imageUri }} className="w-full h-full object-cover" />
-            <Pressable onPress={() => { setImageUri(null); setImageLocation(null); }} style={{ backgroundColor: colors.danger }} className="absolute top-3 right-3 w-8 h-8 rounded-full items-center justify-center">
-              <Trash2 size={16} color="#FFFFFF" />
-            </Pressable>
-          </View>
-        ) : (
-          <View className="flex-row space-x-3 mb-3">
-            <Pressable onPress={async () => {
-              if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestCameraPermissionsAsync();
-                if (status !== 'granted') { Alert.alert('Permission', 'Camera permission required'); return; }
-              }
-              const res = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4,3], quality: 0.6 });
-              if (!res.canceled && res.assets && res.assets.length>0) {
-                const uri = res.assets[0].uri;
-                setImageUri(uri);
-                try {
-                  if (Platform.OS !== 'web') {
-                    const { status } = await Location.requestForegroundPermissionsAsync();
-                    if (status === 'granted') {
-                      const loc = await Location.getCurrentPositionAsync({});
-                      setImageLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Location capture failed', e);
-                }
-              }
-            }} style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth:1 }} className="flex-1 py-3 rounded-xl items-center justify-center">
-              <Camera size={16} color={colors.primary} className="mr-2" />
-              <Text style={{ color: colors.text }} className="text-xs font-bold">Take Photo</Text>
-            </Pressable>
-            <Pressable onPress={async () => {
-              if (Platform.OS !== 'web') {
-                const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (status !== 'granted') { Alert.alert('Permission', 'Photo library permission required'); return; }
-              }
-              const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing:true, aspect:[4,3], quality:0.6 });
-              if (!res.canceled && res.assets && res.assets.length>0) {
-                const uri = res.assets[0].uri;
-                setImageUri(uri);
-                try {
-                  if (Platform.OS !== 'web') {
-                    const { status } = await Location.requestForegroundPermissionsAsync();
-                    if (status === 'granted') {
-                      const loc = await Location.getCurrentPositionAsync({});
-                      setImageLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Location capture failed', e);
-                }
-              }
-            }} style={{ backgroundColor: colors.background, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(62,39,35,0.05)', borderWidth:1 }} className="flex-1 py-3 rounded-xl items-center justify-center">
-              <Text style={{ color: colors.text }} className="text-xs font-bold">Upload Photo</Text>
-            </Pressable>
-          </View>
-        )}
-        <AppButton label="Save & Complete Task" onPress={handleSubmit(onSubmit)} className="w-full" />
-      </View>
+      <AppButton label="Save & Complete Task" onPress={handleSubmit(onSubmit)} className="w-full" />
     </View>
   );
 };
