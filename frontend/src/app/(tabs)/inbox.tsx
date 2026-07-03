@@ -61,8 +61,15 @@ export default function InboxScreen() {
       const res = await axios.get(Url.users, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      // Filter out only employees if needed, but here we just show all users
-      setEmployees(res.data.filter((u: any) => !isManagerRole(u.role)));
+      // If manager, they can send to anyone (usually employees). If employee, they can only send to managers.
+      const user = await StorageService.getCurrentUser();
+      const isMgr = isManagerRole(user?.role || '');
+      
+      if (isMgr) {
+        setEmployees(res.data.filter((u: any) => u.username !== user?.username));
+      } else {
+        setEmployees(res.data.filter((u: any) => isManagerRole(u.role)));
+      }
     } catch (e) {
       console.error('Failed to fetch employees', e);
     }
@@ -169,7 +176,6 @@ export default function InboxScreen() {
           </Text>
         </View>
 
-        {isManager && (
           <View 
             style={{ 
               backgroundColor: colors.card,
@@ -179,7 +185,7 @@ export default function InboxScreen() {
             className="rounded-2xl p-4 mb-6"
           >
             <Text style={{ color: colors.text, fontFamily: 'Poppins_600SemiBold', fontSize: 14, marginBottom: 8 }}>
-              New Instruction
+              {isManager ? 'New Instruction' : 'Send Direct Message'}
             </Text>
             
             {/* Simple Employee Picker Placeholder - For a real app, use a proper Picker component */}
@@ -222,7 +228,6 @@ export default function InboxScreen() {
               </Text>
             </Pressable>
           </View>
-        )}
 
         <View>
           <Text style={{ color: colors.text, fontFamily: 'Poppins_600SemiBold', fontSize: 16, marginBottom: 12 }}>
