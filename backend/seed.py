@@ -29,7 +29,8 @@ def seed_database():
         {"id": "emp_vishwa", "name": "Vishwa", "username": "vishwa", "password": default_emp_pass, "role": "employee", "avatar": "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150&auto=format&fit=crop&q=80"},
         {"id": "emp_mani", "name": "Mani", "username": "mani", "password": default_emp_pass, "role": "employee", "avatar": "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&auto=format&fit=crop&q=80"},
         {"id": "emp_shanmugam", "name": "Shanmugam", "username": "shanmugam", "password": default_emp_pass, "role": "employee", "avatar": "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80"},
-        {"id": "mgr_marcus", "name": "Marcus Brody", "username": "marcus", "password": default_mgr_pass, "role": "manager", "avatar": "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80"}
+        {"id": "mgr_jayanthi", "name": "Jayanthi", "username": "jayanthi", "password": default_mgr_pass, "role": "admin", "avatar": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80"},
+        {"id": "owner_chairman", "name": "Chairman", "username": "chairman", "password": default_mgr_pass, "role": "owner", "avatar": "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=150&auto=format&fit=crop&q=80"}
     ]
 
     for user_data in users_data:
