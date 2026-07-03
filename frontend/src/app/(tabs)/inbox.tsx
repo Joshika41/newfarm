@@ -126,8 +126,13 @@ export default function InboxScreen() {
       const { sound: newSound } = await Audio.Sound.createAsync({ uri: fullUrl });
       setSound(newSound);
       await newSound.playAsync();
-    } catch (e) { 
+    } catch (e: any) { 
       console.error('Play failed', e); 
+      if (Platform.OS === 'web' && e.message?.includes('NotSupportedError')) {
+        Alert.alert('Browser Not Supported', 'Your web browser does not support playing this audio format (.m4a). Please test on a physical iOS/Android device via the Expo Go app!');
+      } else {
+        Alert.alert('Playback Error', 'Could not play the voice message.');
+      }
     }
   };
 
